@@ -91,7 +91,7 @@ contract PlanetBase is PlanetAccessControl {
 		planetIndexToOwner[_tokenId] = _to;
 		if (_from != address(0)) {
 			--ownershipPlanetCount[_from];
-			delete planetIndexToApproved[_from];
+			delete planetIndexToApproved[_tokenId];
 		}
 
 		Transfer(_from, _to, _tokenId);
@@ -195,7 +195,7 @@ contract PlanetOwnership is PlanetBase, ERC721 {
 			uint256 resultIdx = 0;
 			uint256 pId;
 			for (pId = 1; pId <= totalPlanets; ++pId) {
-				if (planetIndexToOwner[pId] == owner) {
+				if (planetIndexToOwner[pId] == _owner) {
 					result[resultIdx] = pId;
 					++resultIdx;
 				}
@@ -321,7 +321,7 @@ contract ClockAuctionBase {
 
     	AuctionSuccessful(_tokenId, price, msg.sender);
 
-    	returns price;
+    	return price;
     }
 }
 
@@ -383,6 +383,11 @@ contract Pausable is Ownable {
   }
 }
 
+
+/**
+ * @title ClockAuction
+ * Base contract manage auction behavior.
+ */
 
 contract ClockAuction is Pausable, ClockAuctionBase {
     bytes4 constant InterfaceSignature_ERC721 = bytes4(0x9f40b779);
@@ -470,6 +475,170 @@ contract ClockAuction is Pausable, ClockAuctionBase {
 
 }
 
-contract SaleClockAuction {
 
+/**
+ * @title SaleClockAuction
+ * Contract provides planet sale.
+ */
+
+contract SaleClockAuction is ClockAuction {
+	bool public isSaleClockAuction = true;
+	uint256 public saleCount = 0;
+	uint256[5] public lastSalePrices;
+
+	function SaleClockAuction(address _nftAddress, uint256 _cut) public ClockAuction(_nftAddress, _cut) {}
+
+	function createAuction(
+		uint256 _tokenId,
+		uint256 _startingPrice,
+		uint256 _endingPrice,
+		uint256 _duration,
+		address _seller
+	) external {
+		require(_startingPrice == uint256(uint128(_startingPrice)));
+		require(_endingPrice == uint256(uint128(_endingPrice)));
+		require(_duration == uint256(uint64(_duration)));
+		require(msg.sender == address(nonFungibleContract));
+
+		_escrow(_seller, _tokenId);
+		Auction memory auction = Auction(
+			_seller,
+			uint128(_startingPrice),
+			uint128(_endingPrice),
+			uint64(_duration),
+			uint64(now)
+		);
+		_addAuction(_tokenId, auction);
+	}
+
+	function bid(uint256 _tokenId) external payable {
+		address seller = tokenIdToAuction[_tokenId].seller;
+		uint256 price = _bid(_tokenId, msg.value);
+		_transfer(msg.sender, _tokenId);
+		if (seller == address(nonFungibleContract)) {
+			lastSalePrices[saleCount % 5] = price;
+			++saleCount;
+		}
+	}
+
+	function averageSalePrice() external view returns (uint256) {
+		uint256 sum = 0;
+		for (uint256 i = 0; i < 5; ++i) {
+			sum += lastSalePrices[i];
+		}
+		return sum / 5;
+	}
+}
+
+
+/**
+ * @title PlanetAuction
+ * Wrapper contract for planet sale.
+ */
+
+contract PlanetAuction is PlanetOwnership {
+	function setSaleAuctionAddress(address _address) external onlyBoss {
+		SaleClockAuction candidateContract = SaleClockAuction(_address);
+		require(candidateContract.isSaleClockAuction());
+		saleAuction = candidateContract;
+	}
+
+	function createSaleAuction(
+		uint256 _planetId,
+		uint256 _startingPrice,
+		uint256 _endingPrice,
+		uint256 _duration
+	) external whenNotPaused {
+		require(_owns(msg.sender, _planetId));
+		_approve(_planetId, saleAuction);
+		saleAuction.createAuction(
+			_planetId,
+			_startingPrice,
+			_endingPrice,
+			_duration,
+			msg.sender
+		);
+	}
+
+	function withdrawAuctionBalance() external onlyBoss {
+		saleAuction.withdrawBalance();
+	}
+}
+
+
+/**
+ * @title PlanetMinting
+ * Discover planet and sale.
+ */
+
+contract PlanetMinting is PlanetAuction {
+	uint256 public constant PLANET_LIMIT = 50000;
+	uint256 public constant STARTING_PRICE = 10 finney;
+    uint256 public constant AUCTION_DURATION = 1 days;
+    uint256 public discoverCount = 0;
+
+    function _computeNextPrice() internal view returns (uint256) {
+    	uint256 avgPrice = saleAuction.averageSalePrice();
+    	require(avgPrice == uint256(uint128(avgPrice)));
+    	uint256 nextPrice = avgPrice + (avgPrice / 2);
+    	if (nextPrice < STARTING_PRICE) {
+    		nextPrice = STARTING_PRICE;
+    	}
+    	return nextPrice;
+    }
+
+    function discoverPlanetAndAuction() external onlyBoss {
+    	require(discoverCount < PLANET_LIMIT);
+
+    	uint256 planetId = _discoverPlanet(address(this));
+    	_approve(planetId, saleAuction);
+    	saleAuction.createAuction(
+    		planetId,
+    		_computeNextPrice(),
+    		0,
+    		AUCTION_DURATION,
+    		address(this)
+    	);
+    	++discoverCount;
+    }
+}
+
+
+/**
+ * @title PlanetCore
+ * Core contract of planet, use other contracts' method.
+ */
+
+contract PlanetCore is PlanetMinting {
+	address public newContractAddress;
+
+	function PlanetCore() public {
+		paused = true;
+		bossAddress = msg.sender;
+	}
+
+	function setNewAddress(address _v2Address) external onlyBoss whenPaused {
+		newContractAddress = _v2Address;
+		ContractUpgrade(_v2Address);
+	}
+
+	function getPlanet(uint256 _id) external view returns (uint256 discoverTime) {
+		Planet storage planet = planets[_id];
+		discoverTime = planet.discoverTime;
+	}
+
+	function unpause() public onlyBoss whenPaused {
+        require(saleAuction != address(0));
+        require(newContractAddress == address(0));
+
+        super.unpause();
+    }
+
+    function withdrawBalance() external onlyBoss {
+    	bossAddress.send(this.balance);
+    }
+
+    function() external payable {
+    	require(msg.sender == address(saleAuction));
+    }
 }
