@@ -77,6 +77,7 @@ contract PlanetBase is PlanetAccessControl {
 
 	struct Planet {
 		uint64 discoverTime;
+        string location;
 	}
 
 	SaleClockAuction public saleAuction;
@@ -97,8 +98,11 @@ contract PlanetBase is PlanetAccessControl {
 		Transfer(_from, _to, _tokenId);
 	}
 
-	function _discoverPlanet(address _owner) internal returns(uint256) {
-		Planet memory _planet = Planet({ discoverTime: uint64(now) });
+	function _discoverPlanet(address _owner, string _location) internal returns(uint256) {
+		Planet memory _planet = Planet({
+            discoverTime: uint64(now),
+            location: _location
+        });
 		uint256 newPlanetId = planets.push(_planet) - 1;
 
 		Discover(_owner, newPlanetId);
@@ -177,7 +181,7 @@ contract PlanetOwnership is PlanetBase, ERC721 {
 	}
 
 	function totalSupply() public view returns (uint256) {
-		return planets.length - 1;	// palnet id start from 1
+		return planets.length;
 	}
 
 	function ownerOf(uint256 _tokenId) external view returns (address owner) {
@@ -194,7 +198,7 @@ contract PlanetOwnership is PlanetBase, ERC721 {
 			uint256 totalPlanets = totalSupply();
 			uint256 resultIdx = 0;
 			uint256 pId;
-			for (pId = 1; pId <= totalPlanets; ++pId) {
+			for (pId = 0; pId < totalPlanets; ++pId) {
 				if (planetIndexToOwner[pId] == _owner) {
 					result[resultIdx] = pId;
 					++resultIdx;
@@ -572,7 +576,6 @@ contract PlanetAuction is PlanetOwnership {
  */
 
 contract PlanetMinting is PlanetAuction {
-	uint256 public constant PLANET_LIMIT = 50000;
 	uint256 public constant STARTING_PRICE = 10 finney;
     uint256 public constant AUCTION_DURATION = 1 days;
     uint256 public discoverCount = 0;
@@ -587,10 +590,8 @@ contract PlanetMinting is PlanetAuction {
     	return nextPrice;
     }
 
-    function discoverPlanetAndAuction() external onlyBoss {
-    	require(discoverCount < PLANET_LIMIT);
-
-    	uint256 planetId = _discoverPlanet(address(this));
+    function discoverPlanetAndAuction(string _location) external onlyBoss {
+    	uint256 planetId = _discoverPlanet(address(this), _location);
     	_approve(planetId, saleAuction);
     	saleAuction.createAuction(
     		planetId,
