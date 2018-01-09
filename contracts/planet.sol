@@ -181,7 +181,7 @@ contract PlanetOwnership is PlanetBase, ERC721 {
 	}
 
 	function totalSupply() public view returns (uint256) {
-		return planets.length;
+		return planets.length - 1;
 	}
 
 	function ownerOf(uint256 _tokenId) external view returns (address owner) {
@@ -198,7 +198,7 @@ contract PlanetOwnership is PlanetBase, ERC721 {
 			uint256 totalPlanets = totalSupply();
 			uint256 resultIdx = 0;
 			uint256 pId;
-			for (pId = 0; pId < totalPlanets; ++pId) {
+			for (pId = 1; pId <= totalPlanets; ++pId) {
 				if (planetIndexToOwner[pId] == _owner) {
 					result[resultIdx] = pId;
 					++resultIdx;
@@ -616,6 +616,7 @@ contract PlanetCore is PlanetMinting {
 	function PlanetCore() public {
 		paused = true;
 		bossAddress = msg.sender;
+        _discoverPlanet(address(0), 'fake planet');
 	}
 
 	function setNewAddress(address _v2Address) external onlyBoss whenPaused {
@@ -623,9 +624,13 @@ contract PlanetCore is PlanetMinting {
 		ContractUpgrade(_v2Address);
 	}
 
-	function getPlanet(uint256 _id) external view returns (uint256 discoverTime) {
+	function getPlanet(uint256 _id) external view returns (
+        uint256 discoverTime,
+        string location
+    ) {
 		Planet storage planet = planets[_id];
 		discoverTime = planet.discoverTime;
+        location = planet.location;
 	}
 
 	function unpause() public onlyBoss whenPaused {
